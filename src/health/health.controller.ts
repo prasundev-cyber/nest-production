@@ -2,14 +2,11 @@
 import { Controller, Get } from '@nestjs/common';
 import {
   HealthCheckService,
-  HttpHealthIndicator,
   TypeOrmHealthIndicator,
   HealthCheck,
   MemoryHealthIndicator,
   DiskHealthIndicator,
 } from '@nestjs/terminus';
-import { InjectConnection } from '@nestjs/typeorm';
-import { Connection } from 'typeorm';
 import { RedisHealthIndicator } from './redis.health';
 import { Public } from '../auth/decorators/public.decorator';
 

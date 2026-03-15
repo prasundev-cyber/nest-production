@@ -67,6 +67,7 @@ export class MetricsInterceptor implements NestInterceptor {
     private readonly histogram: Histogram<string>,
   ) {}
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const req = context.switchToHttp().getRequest();
     const { method, route } = req;
