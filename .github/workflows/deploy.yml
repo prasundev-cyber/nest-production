@@ -215,14 +215,18 @@ jobs:
             docker compose -f docker-compose.prod.yml up -d --no-deps --scale api=3 api
             sleep 10
 
-            # Wait for all containers to report healthy
-            echo "Waiting for health checks (30s)..."
-            sleep 30
+            # Wait for replicas to become healthy (poll up to 180s)
+            echo "Waiting for health checks (up to 180s)..."
+            HEALTHY=0
+            for i in $(seq 1 18); do
+              HEALTHY=$(docker compose -f docker-compose.prod.yml ps api --format json 2>/dev/null | python3 -c 'import json,sys; raw=sys.stdin.read().strip(); data=json.loads(raw) if raw else []; items=data if isinstance(data,list) else ([data] if isinstance(data,dict) else []); print(sum(1 for item in items if isinstance(item,dict) and str(item.get("Health","")).strip().lower().startswith("healthy")))' 2>/dev/null || echo "0")
 
-            # Count healthy replicas — parse JSON array output
-            HEALTHY=$(docker compose -f docker-compose.prod.yml ps api \
-              --format json 2>/dev/null \
-                | python3 -c 'import json, sys; items = []; [items.append(json.loads(line)) for line in sys.stdin.read().splitlines() if line.strip()]; print(sum(1 for item in items if str(item.get("Health", "")).lower() == "healthy"))' 2>/dev/null || echo "0")
+              echo "Health attempt ${i}/18: ${HEALTHY}/3 healthy"
+              if [ "${HEALTHY}" -ge 2 ]; then
+                break
+              fi
+              sleep 10
+            done
 
             echo "Healthy replicas: ${HEALTHY}/3"
 
