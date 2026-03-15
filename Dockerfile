@@ -50,4 +50,4 @@ STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3000/api/v1/health/live || exit 1
 
-CMD ["node", "dist/main.js"]
+CMD ["sh", "-c", "if [ -f dist/main.js ]; then exec node dist/main.js; elif [ -f dist/src/main.js ]; then exec node dist/src/main.js; else echo 'No compiled Nest entrypoint found (expected dist/main.js or dist/src/main.js)' >&2; find dist -maxdepth 3 -type f 2>/dev/null || true; exit 1; fi"]
