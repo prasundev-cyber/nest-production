@@ -187,13 +187,22 @@ jobs:
             IMAGE_TAG=sha-$(echo "${{ github.sha }}" | cut -c1-7)
             echo "Deploying image tag: ${IMAGE_TAG}"
 
-            # Save previous tag for rollback before pulling new image
-            PREV_TAG=$(docker images ghcr.io/${{ github.repository }} \
-              --format '{{.Tag}}' | grep '^sha-' | head -n1 || echo "")
-            echo "Previous tag: ${PREV_TAG:-none}"
+            # Save currently running tag for rollback before pulling new image
+            # Use running container image instead of local image list to avoid stale rollbacks.
+            PREV_IMAGE=$(docker compose -f docker-compose.prod.yml ps -q api | head -n1 | xargs -r docker inspect --format '{{.Config.Image}}' 2>/dev/null || true)
+            PREV_TAG=""
+            if [ -n "${PREV_IMAGE}" ]; then
+              PREV_TAG="${PREV_IMAGE##*:}"
+              if ! echo "${PREV_TAG}" | grep -q '^sha-'; then
+                PREV_TAG=""
+              fi
+            fi
+            echo "Current running image: ${PREV_IMAGE:-none}"
+            echo "Rollback tag candidate: ${PREV_TAG:-none}"
 
             # Pull the new image
             docker pull ghcr.io/${{ github.repository }}:${IMAGE_TAG}
+            docker image inspect ghcr.io/${{ github.repository }}:${IMAGE_TAG} --format 'Pulled image digest: {{index .RepoDigests 0}}' || true
 
             # Write IMAGE_TAG into .env so compose picks it up
             # (avoids exporting vars that don't survive across ssh sessions)
@@ -203,6 +212,7 @@ jobs:
               echo "DOCKER_REGISTRY=ghcr.io" >> .env
             sed -i "s|^IMAGE_NAME=.*|IMAGE_NAME=${{ github.repository }}|" .env || \
               echo "IMAGE_NAME=${{ github.repository }}" >> .env
+            echo "Effective deploy image: ghcr.io/${{ github.repository }}:${IMAGE_TAG}"
 
             # Ensure stateful dependencies exist before rotating API replicas.
             docker compose -f docker-compose.prod.yml up -d postgres redis traefik
