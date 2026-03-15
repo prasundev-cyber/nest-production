@@ -1,0 +1,65 @@
+# traefik/config/middlewares.yml — Dynamic configuration
+# Loaded by the file provider; changes apply without restart.
+
+http:
+  middlewares:
+
+    # ── Security Headers ─────────────────────────────────────
+    securityHeaders:
+      headers:
+        accessControlAllowMethods:
+          - GET
+          - OPTIONS
+          - PUT
+          - POST
+          - DELETE
+          - PATCH
+        accessControlMaxAge: 100
+        hostsProxyHeaders:
+          - "X-Forwarded-Host"
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+        stsSeconds: 63072000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        forceSTSHeader: true
+        customFrameOptionsValue: "SAMEORIGIN"
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        permissionsPolicy: "camera=(), microphone=(), geolocation=()"
+        customResponseHeaders:
+          X-Robots-Tag: "none,noarchive,nosnippet,notranslate,noimageindex"
+          X-Powered-By: ""
+          Server: ""
+
+    # ── Rate Limiting ────────────────────────────────────────
+    rateLimit:
+      rateLimit:
+        average: 100
+        period: 1m
+        burst: 50
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+
+    # ── Compression ──────────────────────────────────────────
+    compress:
+      compress:
+        excludedContentTypes:
+          - text/event-stream
+        defaultEncoding: gzip
+
+    # ── IP Allowlist for admin routes ────────────────────────
+    adminOnly:
+      ipAllowList:
+        sourceRange:
+          - "127.0.0.1/32"
+          # Add your office/home IP here
+          # - "203.0.113.0/24"
+
+    # ── Retry on upstream failure ────────────────────────────
+    retry:
+      retry:
+        attempts: 3
+        initialInterval: 100ms
