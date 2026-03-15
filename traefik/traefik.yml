@@ -39,10 +39,6 @@ entryPoints:
     http:
       tls:
         certResolver: letsencrypt
-        domains:
-          - main: "${DOMAIN}"
-            sans:
-              - "*.${DOMAIN}"
       middlewares:
         - securityHeaders@file
     http3:
@@ -53,14 +49,8 @@ certificatesResolvers:
     acme:
       email: "${ACME_EMAIL}"
       storage: /certificates/acme.json
-      # Use tlsChallenge for single-domain or dnsChallenge for wildcard
+      # Simple HTTPS certificate issuance for subdomains like api.${DOMAIN}.
       tlsChallenge: {}
-      # For wildcard certs via Cloudflare:
-      # dnsChallenge:
-      #   provider: cloudflare
-      #   resolvers:
-      #     - "1.1.1.1:53"
-      #     - "8.8.8.8:53"
 
 providers:
   docker:

@@ -28,6 +28,9 @@ services:
     image: traefik:v3.1
     container_name: traefik
     restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
     security_opt:
       - no-new-privileges:true
     networks:
