@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: "Force deploy even if tests fail"
+        required: false
+        default: "false"
 
 concurrency:
   group: production-deploy
@@ -157,7 +162,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT }}
+          port: ${{ secrets.VPS_PORT || 22 }}
           source: "docker-compose.prod.yml,traefik/,monitoring/"
           target: "/opt/app"
           overwrite: true
@@ -168,74 +173,88 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT }}
+          port: ${{ secrets.VPS_PORT || 22 }}
           script: |
             set -euo pipefail
 
             cd /opt/app
 
-            # Log in to registry on the VPS
+            # Log in to GHCR on the VPS
             echo "${{ secrets.GITHUB_TOKEN }}" | \
               docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
+            # Resolve the image tag (first 7 chars of SHA)
+            IMAGE_TAG=sha-$(echo "${{ github.sha }}" | cut -c1-7)
+            echo "Deploying image tag: ${IMAGE_TAG}"
+
+            # Save previous tag for rollback before pulling new image
+            PREV_TAG=$(docker images ghcr.io/${{ github.repository }} \
+              --format '{{.Tag}}' | grep '^sha-' | head -n1 || echo "")
+            echo "Previous tag: ${PREV_TAG:-none}"
+
             # Pull the new image
-            IMAGE_TAG=sha-$(echo "${{ github.sha }}" | head -c7)
             docker pull ghcr.io/${{ github.repository }}:${IMAGE_TAG}
 
-            # Export env for docker compose
-            export IMAGE_TAG=${IMAGE_TAG}
-            export DOCKER_REGISTRY=ghcr.io
-            export IMAGE_NAME=${{ github.repository }}
+            # Write IMAGE_TAG into .env so compose picks it up
+            # (avoids exporting vars that don't survive across ssh sessions)
+            sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${IMAGE_TAG}|" .env || \
+              echo "IMAGE_TAG=${IMAGE_TAG}" >> .env
+            sed -i "s|^DOCKER_REGISTRY=.*|DOCKER_REGISTRY=ghcr.io|" .env || \
+              echo "DOCKER_REGISTRY=ghcr.io" >> .env
+            sed -i "s|^IMAGE_NAME=.*|IMAGE_NAME=${{ github.repository }}|" .env || \
+              echo "IMAGE_NAME=${{ github.repository }}" >> .env
 
-            # Rolling update — one replica at a time
-            docker compose -f docker-compose.prod.yml \
-              up -d --no-deps --scale api=3 \
-              --update-order start-first api
+            # Zero-downtime: stop one old replica, start one new — repeat x3
+            # --update-order is Swarm-only; for plain Compose we scale manually
+            echo "Starting rolling update..."
+            docker compose -f docker-compose.prod.yml up -d --no-deps --scale api=4 api
+            sleep 10
+            docker compose -f docker-compose.prod.yml up -d --no-deps --scale api=3 api
+            sleep 10
 
-            # Wait for health checks
-            echo "Waiting for services to be healthy..."
-            sleep 15
+            # Wait for all containers to report healthy
+            echo "Waiting for health checks (30s)..."
+            sleep 30
 
-            # Verify at least 2 replicas are healthy
+            # Count healthy replicas — parse JSON array output
             HEALTHY=$(docker compose -f docker-compose.prod.yml ps api \
-              --format json | python3 -c \
-              "import json,sys; data=json.load(sys.stdin); \
-               print(sum(1 for s in data if s.get('Health')=='healthy'))")
+              --format json 2>/dev/null \
+                | python3 -c 'import json, sys; items = []; [items.append(json.loads(line)) for line in sys.stdin.read().splitlines() if line.strip()]; print(sum(1 for item in items if str(item.get("Health", "")).lower() == "healthy"))' 2>/dev/null || echo "0")
 
-            if [ "$HEALTHY" -lt 2 ]; then
-              echo "DEPLOY FAILED: Only $HEALTHY healthy replicas. Rolling back..."
-              # Pull the previous image tag and redeploy
-              PREV_TAG=$(docker images ghcr.io/${{ github.repository }} \
-                --format '{{.Tag}}' | grep '^sha-' | sed -n '2p')
-              if [ -n "$PREV_TAG" ]; then
-                export IMAGE_TAG=${PREV_TAG}
+            echo "Healthy replicas: ${HEALTHY}/3"
+
+            if [ "${HEALTHY}" -lt 2 ]; then
+              echo "DEPLOY FAILED: only ${HEALTHY} healthy replicas."
+
+              # Rollback: re-deploy the previous image tag if we have one
+              if [ -n "${PREV_TAG}" ]; then
+                echo "Rolling back to ${PREV_TAG}..."
+                sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${PREV_TAG}|" .env
                 docker compose -f docker-compose.prod.yml \
                   up -d --no-deps --scale api=3 api
-                echo "Rolled back to ${PREV_TAG}"
+                echo "Rollback complete."
               else
-                echo "No previous image found for rollback"
+                echo "No previous image tag found — cannot auto-rollback."
               fi
               exit 1
             fi
 
-            echo "Deploy successful. $HEALTHY/3 replicas healthy."
+            echo "Deploy successful. ${HEALTHY}/3 replicas healthy."
 
-            # Prune old images
+            # Prune images older than 48h to reclaim disk
             docker image prune -f --filter "until=48h"
 
       - name: Notify on failure
         if: failure()
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT }}
-          script: |
-            # Send alert to Slack / webhook
+        # Run on the GitHub runner — no SSH needed for a webhook call
+        run: |
+          if [ -n "${{ secrets.SLACK_WEBHOOK }}" ]; then
             curl -s -X POST "${{ secrets.SLACK_WEBHOOK }}" \
               -H 'Content-type: application/json' \
-              -d '{"text":"🚨 *Production deploy FAILED* for `${{ github.repository }}` — commit `${{ github.sha }}`"}'
+              -d "{\"text\":\"Deploy FAILED for \`${{ github.repository }}\` commit \`${{ github.sha }}\`\"}"
+          else
+            echo "SLACK_WEBHOOK secret not set — skipping Slack notification"
+          fi
 
   # ──────────────────────────────────────────────────────────
   #  JOB 4: Smoke Test after Deploy
