@@ -204,6 +204,9 @@ jobs:
             sed -i "s|^IMAGE_NAME=.*|IMAGE_NAME=${{ github.repository }}|" .env || \
               echo "IMAGE_NAME=${{ github.repository }}" >> .env
 
+            # Ensure stateful dependencies exist before rotating API replicas.
+            docker compose -f docker-compose.prod.yml up -d postgres redis traefik
+
             # Zero-downtime: stop one old replica, start one new — repeat x3
             # --update-order is Swarm-only; for plain Compose we scale manually
             echo "Starting rolling update..."
@@ -268,7 +271,7 @@ jobs:
         run: |
           for i in 1 2 3 4 5; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-              https://api.${{ secrets.DOMAIN }}/health)
+              https://api.${{ secrets.DOMAIN }}/api/v1/health/ready)
             if [ "$STATUS" = "200" ]; then
               echo "Health check passed (attempt $i)"
               exit 0
