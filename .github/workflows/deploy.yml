@@ -4,11 +4,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      force_deploy:
-        description: "Force deploy even if tests fail"
-        required: false
-        default: "false"
 
 concurrency:
   group: production-deploy
@@ -162,7 +157,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}
+          port: ${{ secrets.VPS_PORT }}
           source: "docker-compose.prod.yml,traefik/,monitoring/"
           target: "/opt/app"
           overwrite: true
@@ -173,7 +168,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}
+          port: ${{ secrets.VPS_PORT }}
           script: |
             set -euo pipefail
 
@@ -209,8 +204,17 @@ jobs:
 
             if [ "$HEALTHY" -lt 2 ]; then
               echo "DEPLOY FAILED: Only $HEALTHY healthy replicas. Rolling back..."
-              docker compose -f docker-compose.prod.yml \
-                rollback api
+              # Pull the previous image tag and redeploy
+              PREV_TAG=$(docker images ghcr.io/${{ github.repository }} \
+                --format '{{.Tag}}' | grep '^sha-' | sed -n '2p')
+              if [ -n "$PREV_TAG" ]; then
+                export IMAGE_TAG=${PREV_TAG}
+                docker compose -f docker-compose.prod.yml \
+                  up -d --no-deps --scale api=3 api
+                echo "Rolled back to ${PREV_TAG}"
+              else
+                echo "No previous image found for rollback"
+              fi
               exit 1
             fi
 
@@ -226,6 +230,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
           script: |
             # Send alert to Slack / webhook
             curl -s -X POST "${{ secrets.SLACK_WEBHOOK }}" \
