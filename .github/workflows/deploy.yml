@@ -229,7 +229,9 @@ jobs:
             echo "Waiting for health checks (up to 180s)..."
             HEALTHY=0
             for i in $(seq 1 18); do
-              HEALTHY=$(docker compose -f docker-compose.prod.yml ps api --format json 2>/dev/null | python3 -c 'import json,sys; raw=sys.stdin.read().strip(); data=json.loads(raw) if raw else []; items=data if isinstance(data,list) else ([data] if isinstance(data,dict) else []); print(sum(1 for item in items if isinstance(item,dict) and str(item.get("Health","")).strip().lower().startswith("healthy")))' 2>/dev/null || echo "0")
+              # Count containers whose status text contains "(healthy)".
+              # This works with all docker compose versions regardless of JSON vs NDJSON output.
+              HEALTHY=$(docker compose -f docker-compose.prod.yml ps api 2>/dev/null | grep -c "(healthy)" || echo "0")
 
               echo "Health attempt ${i}/18: ${HEALTHY}/3 healthy"
               if [ "${HEALTHY}" -ge 2 ]; then
