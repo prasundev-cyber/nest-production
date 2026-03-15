@@ -51,8 +51,6 @@ services:
       - "traefik.http.routers.traefik-dash.service=api@internal"
       - "traefik.http.routers.traefik-dash.middlewares=traefik-auth,securityHeaders"
       - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}"
-    environment:
-      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}   # If using Cloudflare DNS challenge
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 30s
