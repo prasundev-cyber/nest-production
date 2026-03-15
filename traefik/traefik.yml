@@ -49,8 +49,9 @@ certificatesResolvers:
     acme:
       email: "${ACME_EMAIL}"
       storage: /certificates/acme.json
-      # Simple HTTPS certificate issuance for subdomains like api.${DOMAIN}.
-      tlsChallenge: {}
+      # Use HTTP challenge on port 80 for straightforward single-domain cert issuance.
+      httpChallenge:
+        entryPoint: web
 
 providers:
   docker:
